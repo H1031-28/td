@@ -161,15 +161,15 @@ const state = {
   enemies: [], towers: [], bullets: [], effects: [],
   gameOver: false, paused: false,
   speed: 1,
-  selectedType: 'arrow',
   panelTower: null,
+  buildMenu: null,
   toast: '', toastTime: 0,
   camX: 0, camTargetX: 0,
   buildFlash: null
 };
 
 /* ============ 存档 ============ */
-const SAVE_KEY = 'td_v2_save';
+const SAVE_KEY = 'td_v3_save';
 function saveGame() {
   if (state.gameOver) return;
   try {
@@ -868,8 +868,9 @@ function drawEffect(ef) {
 /* ============ UI ============ */
 function getButtons() {
   const btns = [];
+  // 速度按钮 (更紧凑，防止溢出)
   const speeds = [1, 2, 4, 6, 8];
-  const sw = 34, gap = 4;
+  const sw = 28, gap = 2;
   const totalW = speeds.length * sw + (speeds.length - 1) * gap;
   const startX = LW - totalW - 8;
   for (let i = 0; i < speeds.length; i++) {
@@ -878,59 +879,19 @@ function getButtons() {
       x: startX + i * (sw + gap), y: 6, w: sw, h: 30
     });
   }
-  btns.push({ id: 'pause', x: 8, y: 6, w: 64, h: 30 });
-
-  const bw = Math.min(108, (LW - 40) / 3 - 8);
-  const bh = 62;
-  const by = LH - bh - 10;
-  const totW = bw * 3 + 16;
-  const sx = (LW - totW) / 2;
-  const types = ['arrow', 'mortar', 'tesla'];
-  for (let i = 0; i < 3; i++) {
-    btns.push({
-      id: 'tower_' + types[i], type: types[i],
-      x: sx + i * (bw + 8), y: by, w: bw, h: bh
-    });
-  }
+  // 暂停按钮 (缩小并放到最左侧)
+  btns.push({ id: 'pause', x: 8, y: 6, w: 44, h: 30 });
   return btns;
 }
 
 function drawUI(now) {
+  // 顶部栏
   ctx.fillStyle = 'rgba(10,16,30,0.85)';
   ctx.fillRect(0, 0, LW, 44);
   ctx.fillStyle = 'rgba(90,130,200,0.35)';
   ctx.fillRect(0, 44, LW, 1);
 
-  ctx.fillStyle = '#ffd93b';
-  ctx.beginPath(); ctx.arc(18, 22, 7, 0, 7); ctx.fill();
-  ctx.fillStyle = '#8a6b00';
-  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('G', 18, 22.5);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(Math.floor(state.gold), 30, 23);
-
-  ctx.fillStyle = '#7fb8ff';
-  ctx.font = 'bold 15px sans-serif';
-  ctx.fillText('W' + state.wave, 108, 23);
-
-  ctx.fillStyle = '#ff5a7a';
-  ctx.beginPath();
-  const hx = 158, hy = 22;
-  ctx.moveTo(hx, hy + 5);
-  ctx.bezierCurveTo(hx - 8, hy - 3, hx - 4, hy - 8, hx, hy - 3);
-  ctx.bezierCurveTo(hx + 4, hy - 8, hx + 8, hy - 3, hx, hy + 5);
-  ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 15px sans-serif';
-  ctx.fillText(state.hp, hx + 12, 23);
-
-  ctx.fillStyle = 'rgba(200,220,255,0.5)';
-  ctx.font = 'bold 11px sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('最高 W' + state.maxWave, LW - 8, 23);
-  ctx.textAlign = 'left';
-
+  // 暂停按钮
   const btns = getButtons();
   const pauseBtn = btns.find(b => b.id === 'pause');
   ctx.fillStyle = state.paused ? 'rgba(255,180,60,0.9)' : 'rgba(60,90,150,0.7)';
@@ -940,17 +901,53 @@ function drawUI(now) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(state.paused ? '继续' : '暂停', pauseBtn.x + pauseBtn.w/2, pauseBtn.y + pauseBtn.h/2 + 1);
 
+  // 金币 (放在暂停按钮右侧)
+  ctx.fillStyle = '#ffd93b';
+  ctx.beginPath(); ctx.arc(60, 22, 7, 0, 7); ctx.fill();
+  ctx.fillStyle = '#8a6b00';
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('G', 60, 22.5);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(Math.floor(state.gold), 74, 23);
+
+  // 波次
+  ctx.fillStyle = '#7fb8ff';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('W' + state.wave, 120, 23);
+
+  // 血量
+  ctx.fillStyle = '#ff5a7a';
+  ctx.beginPath();
+  const hx = 155, hy = 22;
+  ctx.moveTo(hx, hy + 5);
+  ctx.bezierCurveTo(hx - 8, hy - 3, hx - 4, hy - 8, hx, hy - 3);
+  ctx.bezierCurveTo(hx + 4, hy - 8, hx + 8, hy - 3, hx, hy + 5);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText(state.hp, hx + 12, 23);
+
+  // 最高记录
+  ctx.fillStyle = 'rgba(200,220,255,0.5)';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('最高 W' + state.maxWave, LW - 8, 23);
+  ctx.textAlign = 'left';
+
+  // 速度按钮
   for (const b of btns) {
     if (b.id.indexOf('speed_') !== 0) continue;
     const active = state.speed === b.speed;
     ctx.fillStyle = active ? 'rgba(255,180,60,0.9)' : 'rgba(40,60,100,0.75)';
     roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
     ctx.fillStyle = active ? '#2a1a00' : '#c8d8f0';
-    ctx.font = 'bold 12px sans-serif';
+    ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(b.speed + 'x', b.x + b.w/2, b.y + b.h/2 + 1);
   }
 
+  // 提示条
   if (state.toast) {
     ctx.globalAlpha = Math.min(1, state.toastTime * 2);
     ctx.fillStyle = 'rgba(20,30,50,0.92)';
@@ -965,73 +962,15 @@ function drawUI(now) {
     ctx.globalAlpha = 1;
   }
 
-  for (const b of btns) {
-    if (b.id.indexOf('tower_') !== 0) continue;
-    const c = TOWER_TYPES[b.type];
-    const selected = state.selectedType === b.type;
-    const canAfford = state.gold >= c.cost;
-
-    ctx.fillStyle = selected ? 'rgba(40,80,140,0.95)' : 'rgba(20,30,50,0.9)';
-    roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill();
-    ctx.strokeStyle = selected ? c.accent : 'rgba(90,120,180,0.5)';
-    ctx.lineWidth = selected ? 2.5 : 1.5;
-    roundRect(b.x, b.y, b.w, b.h, 10); ctx.stroke();
-
-    const ix = b.x + 26, iy = b.y + b.h / 2;
-    drawTowerIcon(b.type, ix, iy, now);
-
-    ctx.fillStyle = canAfford ? '#fff' : '#ff7676';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(c.name, b.x + 48, b.y + 22);
-
-    ctx.fillStyle = '#ffd93b';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillText('💰 ' + c.cost, b.x + 48, b.y + 42);
-
-    if (selected) {
-      ctx.fillStyle = c.accent;
-      ctx.beginPath();
-      ctx.moveTo(b.x + b.w/2, b.y - 6);
-      ctx.lineTo(b.x + b.w/2 - 5, b.y - 12);
-      ctx.lineTo(b.x + b.w/2 + 5, b.y - 12);
-      ctx.closePath(); ctx.fill();
-    }
-  }
-
+  // 塔操作面板 (居中显示)
   if (state.panelTower) drawTowerPanel(now);
-  if (state.paused && !state.gameOver) drawPausePanel();
-  if (state.gameOver) drawGameOver();
-}
+  // 建造菜单 (点击空地弹出)
+  if (state.buildMenu) drawBuildMenu(now);
 
-function drawTowerIcon(type, x, y, now) {
-  const c = TOWER_TYPES[type];
-  if (type === 'arrow') {
-    ctx.fillStyle = c.color;
-    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
-    ctx.fillStyle = c.accent;
-    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
-    ctx.fillStyle = '#ecf0f1';
-    ctx.fillRect(x - 2, y - 10, 4, 20);
-    ctx.fillStyle = '#f39c12';
-    ctx.beginPath(); ctx.arc(x, y - 10, 3, 0, 7); ctx.fill();
-  } else if (type === 'mortar') {
-    ctx.fillStyle = c.color;
-    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
-    ctx.fillStyle = '#1e5631';
-    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
-    ctx.fillStyle = '#2c3e50';
-    ctx.fillRect(x - 3, y - 12, 6, 16);
-    ctx.fillStyle = c.accent;
-    ctx.beginPath(); ctx.arc(x, y - 12, 3, 0, 7); ctx.fill();
-  } else if (type === 'tesla') {
-    ctx.fillStyle = c.color;
-    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
-    ctx.strokeStyle = c.accent; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(x, y, 8, now * 0.005, now * 0.005 + 4); ctx.stroke();
-    ctx.fillStyle = '#f5e6ff';
-    ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill();
-  }
+  // 暂停面板
+  if (state.paused && !state.gameOver) drawPausePanel();
+  // 游戏结束
+  if (state.gameOver) drawGameOver();
 }
 
 function drawTowerPanel(now) {
@@ -1044,11 +983,9 @@ function drawTowerPanel(now) {
   const canUp = state.gold >= cost;
 
   const pw = 180, ph = 88;
-  let px = t.x - pw / 2;
-  let py = t.y - ph - 30;
-  if (px < state.camX + 8) px = state.camX + 8;
-  if (px + pw > state.camX + LW - 8) px = state.camX + LW - pw - 8;
-  if (py < 50) py = t.y + 32;
+  // 核心改动：面板固定居中显示，彻底解决“挡住金币”和“跑出屏幕”的问题
+  const px = (LW - pw) / 2;
+  const py = (LH - ph) / 2;
 
   ctx.fillStyle = 'rgba(12,20,38,0.96)';
   roundRect(px, py, pw, ph, 10); ctx.fill();
@@ -1079,6 +1016,96 @@ function drawTowerPanel(now) {
     up: { x: upX, y: upY, w: bw, h: bh, cost },
     sell: { x: slX, y: slY, w: bw, h: bh, value: sell }
   };
+}
+
+function drawBuildMenu(now) {
+  const menu = state.buildMenu;
+  if (!menu) return;
+
+  // 将世界坐标转换为屏幕坐标
+  const sx = menu.x - state.camX;
+  const sy = menu.y;
+
+  const mw = 230, mh = 88;
+  let mx = sx - mw / 2;
+  let my = sy - mh - 30;
+
+  // 边界限制
+  if (mx < 8) mx = 8;
+  if (mx + mw > LW - 8) mx = LW - mw - 8;
+  if (my < 50) my = sy + 30;
+
+  ctx.fillStyle = 'rgba(12,20,38,0.96)';
+  roundRect(mx, my, mw, mh, 10); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,170,255,0.6)'; ctx.lineWidth = 2;
+  roundRect(mx, my, mw, mh, 10); ctx.stroke();
+
+  // 标题
+  ctx.fillStyle = '#9fb8df';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('选择炮塔类型', mx + mw / 2, my + 15);
+
+  const types = ['arrow', 'mortar', 'tesla'];
+  const btnW = 66, btnH = 54;
+  const gap = (mw - types.length * btnW) / (types.length + 1);
+
+  menu._uiRects = { _mx: mx, _my: my, _mw: mw, _mh: mh };
+
+  for (let i = 0; i < types.length; i++) {
+    const type = types[i];
+    const c = TOWER_TYPES[type];
+    const canAfford = state.gold >= c.cost;
+
+    const bx = mx + gap + i * (btnW + gap);
+    const by = my + 26;
+
+    ctx.fillStyle = canAfford ? 'rgba(40,80,140,0.9)' : 'rgba(40,40,60,0.8)';
+    roundRect(bx, by, btnW, btnH, 8); ctx.fill();
+    ctx.strokeStyle = canAfford ? c.accent : 'rgba(80,80,100,0.5)'; ctx.lineWidth = 1.5;
+    roundRect(bx, by, btnW, btnH, 8); ctx.stroke();
+
+    // 图标
+    drawTowerIcon(type, bx + btnW / 2, by + 18, now);
+
+    // 价格
+    ctx.fillStyle = canAfford ? '#ffd93b' : '#888';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('💰' + c.cost, bx + btnW / 2, by + 42);
+
+    menu._uiRects[type] = { x: bx, y: by, w: btnW, h: btnH };
+  }
+}
+
+function drawTowerIcon(type, x, y, now) {
+  const c = TOWER_TYPES[type];
+  if (type === 'arrow') {
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = c.accent;
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ecf0f1';
+    ctx.fillRect(x - 2, y - 10, 4, 20);
+    ctx.fillStyle = '#f39c12';
+    ctx.beginPath(); ctx.arc(x, y - 10, 3, 0, 7); ctx.fill();
+  } else if (type === 'mortar') {
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1e5631';
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(x - 3, y - 12, 6, 16);
+    ctx.fillStyle = c.accent;
+    ctx.beginPath(); ctx.arc(x, y - 12, 3, 0, 7); ctx.fill();
+  } else if (type === 'tesla') {
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.strokeStyle = c.accent; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 8, now * 0.005, now * 0.005 + 4); ctx.stroke();
+    ctx.fillStyle = '#f5e6ff';
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill();
+  }
 }
 
 function drawPausePanel() {
@@ -1234,6 +1261,7 @@ canvas.addEventListener('pointercancel', () => { pointer.down = false; });
 
 /* ============ 点击处理 ============ */
 function handleTap(x, y) {
+  // 1. 游戏结束界面
   if (state.gameOver) {
     if (state._overUI && hitRect({x,y}, state._overUI.restart)) {
       restartGame();
@@ -1241,6 +1269,7 @@ function handleTap(x, y) {
     return;
   }
 
+  // 2. 暂停界面
   if (state.paused) {
     const ui = state._pauseUI;
     if (!ui) return;
@@ -1250,6 +1279,29 @@ function handleTap(x, y) {
     return;
   }
 
+  // 3. 建造菜单 (点击空地弹出的菜单)
+  if (state.buildMenu) {
+    const r = state.buildMenu._uiRects;
+    let clickedMenuBtn = false;
+    for (const key of ['arrow','mortar','tesla']) {
+      if (hitRect({x,y}, r[key])) {
+        doBuild(state.buildMenu.spotIdx, key);
+        state.buildMenu = null;
+        clickedMenuBtn = true;
+        break;
+      }
+    }
+    if (clickedMenuBtn) return;
+    
+    // 点击菜单外部，关闭菜单
+    if (!hitRect({x,y}, {x:r._mx, y:r._my, w:r._mw, h:r._mh})) {
+      state.buildMenu = null;
+    } else {
+      return; // 点击菜单内部但不是按钮，无操作
+    }
+  }
+
+  // 4. 塔操作面板 (升级/出售)
   if (state.panelTower && state.panelTower._uiRects) {
     const r = state.panelTower._uiRects;
     if (hitRect({x,y}, r.up)) {
@@ -1262,27 +1314,20 @@ function handleTap(x, y) {
     }
   }
 
+  // 5. UI 按钮 (暂停、速度)
   const btns = getButtons();
   for (const b of btns) {
-    let hit = false;
-    if (b.id === 'pause') hit = hitRect({x,y}, b);
-    else if (b.id.indexOf('speed_') === 0) hit = hitRect({x,y}, b);
-    else if (b.id.indexOf('tower_') === 0) hit = hitRect({x,y}, b);
-    if (hit) {
+    if (hitRect({x,y}, b)) {
       if (b.id === 'pause') { state.paused = !state.paused; return; }
       if (b.id.indexOf('speed_') === 0) {
         state.speed = (state.speed === b.speed) ? 1 : b.speed;
         toast('速度 ' + state.speed + 'x', 0.9);
         return;
       }
-      if (b.id.indexOf('tower_') === 0) {
-        state.selectedType = b.type;
-        state.panelTower = null;
-        return;
-      }
     }
   }
 
+  // 6. 世界点击检测
   const wx = x + state.camX;
   const wy = y;
 
@@ -1300,10 +1345,16 @@ function handleTap(x, y) {
   const existing = state.towers.find(t => t.spotIdx === spotIdx);
   if (existing) {
     state.panelTower = existing;
+    state.buildMenu = null; // 关闭建造菜单
     return;
   }
 
-  const type = state.selectedType;
+  // 空地 -> 打开建造菜单
+  state.buildMenu = { spotIdx: spotIdx, x: wx, y: wy };
+  state.panelTower = null;
+}
+
+function doBuild(spotIdx, type) {
   const cost = TOWER_TYPES[type].cost;
   if (state.gold < cost) {
     toast('金币不足（需要 ' + cost + '）', 1.2);
@@ -1316,7 +1367,6 @@ function handleTap(x, y) {
     level: 1, cd: 0, angle: -Math.PI / 2, recoil: 0
   };
   state.towers.push(t);
-  state.panelTower = t;
   state.buildFlash = { x: pos[0], y: pos[1], life: 0.4 };
   toast('建造 ' + TOWER_TYPES[type].name, 0.9);
   saveGame();
@@ -1359,6 +1409,7 @@ function restartGame() {
   state.paused = false;
   state.speed = 1;
   state.panelTower = null;
+  state.buildMenu = null;
   state.toast = '';
   state.toastTime = 0;
   state.camX = 0;
