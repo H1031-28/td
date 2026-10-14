@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#1a1a2e">
+<meta name="theme-color" content="#0b0f1a">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,217 +13,1389 @@
 <title>无限塔防</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{
-  height:100%;background:#000;overflow:hidden;
-  display:flex;align-items:center;justify-content:center;
-  -webkit-user-select:none;user-select:none;
-  -webkit-tap-highlight-color:transparent;
-  touch-action:none;
-}
-canvas{
-  display:block;touch-action:none;
-  height:100vh;width:calc(100vh * 9 / 16);
-  max-width:100vw;max-height:calc(100vw * 16 / 9);
-}
+html,body{width:100%;height:100%;background:#0b0f1a;overflow:hidden;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
+  touch-action:none;overscroll-behavior:none}
+canvas{display:block;touch-action:none}
 </style>
 </head>
 <body>
-<canvas id="c" width="720" height="1280"></canvas>
+<canvas id="c"></canvas>
 <script>
-const cv = document.getElementById('c');
-const ctx = cv.getContext('2d');
-ctx.scale(2,2);
-const W = 360, H = 640;
+'use strict';
 
+/* ============ 基础设置 ============ */
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const MAP_W = 1400, MAP_H = 640;
+let DPR, LW, LH, PS;
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  const cw = window.innerWidth, ch = window.innerHeight;
+  canvas.width = Math.round(cw * DPR);
+  canvas.height = Math.round(ch * DPR);
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  LH = 640;
+  PS = canvas.height / LH;
+  LW = canvas.width / PS;
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+resize();
+
+/* ============ 地图数据 ============ */
 const PATH = [
-  {x:-20,y:80},{x:280,y:80},{x:280,y:240},{x:80,y:240},
-  {x:80,y:420},{x:320,y:420},{x:320,y:600},{x:180,y:600}
+  {x:-20,y:120},{x:200,y:120},{x:200,y:320},{x:400,y:320},
+  {x:400,y:520},{x:650,y:520},{x:650,y:220},{x:900,y:220},
+  {x:900,y:470},{x:1150,y:470},{x:1150,y:170},{x:1380,y:170},
+  {x:1380,y:560}
 ];
+
 const SPOTS = [
-  [140,40],[220,140],[140,320],[220,380],[40,240],
-  [340,380],[260,520],[120,460],[260,200],[40,420]
+  [80,70],[150,70],[260,70],[330,70],
+  [80,200],[140,200],[260,200],[330,200],
+  [80,260],[140,260],[260,260],[330,260],
+  [310,410],[360,410],[460,410],[510,410],
+  [310,560],[360,560],[460,560],[510,560],[580,560],
+  [570,320],[610,320],[720,320],[760,320],
+  [720,130],[780,130],[820,130],
+  [830,360],[870,360],[980,360],[1020,360],
+  [980,550],[1020,550],[1080,550],
+  [1080,280],[1120,280],[1230,280],
+  [1230,380],[1300,380],[1300,480]
 ];
 
-let gold,hp,wave,active,wtimer,queue,enemies,towers,bullets,over,msg,msgT,last;
+/* ============ 塔配置 ============ */
+const TOWER_TYPES = {
+  arrow: {
+    name:'箭塔', short:'箭', cost:50,
+    color:'#3498db', accent:'#85c1e9',
+    baseDamage:14, baseRange:90, baseRate:1.4,
+    dmgGrow:1.18, rangeGrow:3, rateGrow:1.015,
+    costBase:40, costGrow:1.24
+  },
+  mortar: {
+    name:'迫击炮', short:'炮', cost:100,
+    color:'#27ae60', accent:'#58d68d',
+    baseDamage:34, baseRange:150, baseRate:0.55,
+    splash:50,
+    dmgGrow:1.20, rangeGrow:4, rateGrow:1.012,
+    costBase:80, costGrow:1.27
+  },
+  tesla: {
+    name:'电磁炮', short:'电', cost:150,
+    color:'#9b59b6', accent:'#c39bd3',
+    baseDamage:22, baseRange:100, baseRate:0.9,
+    chain:3, chainRange:75,
+    dmgGrow:1.17, rangeGrow:3, rateGrow:1.014,
+    costBase:120, costGrow:1.29
+  }
+};
 
-function reset(){
-  gold=100;hp=10;wave=0;active=false;wtimer=1;
-  queue=[];enemies=[];towers=[];bullets=[];
-  over=false;msg='';msgT=0;last=0;
+function towerStats(t) {
+  const c = TOWER_TYPES[t.type];
+  const lv = t.level - 1;
+  return {
+    damage: c.baseDamage * Math.pow(c.dmgGrow, lv),
+    range: c.baseRange + c.rangeGrow * lv,
+    rate: c.baseRate * Math.pow(c.rateGrow, lv),
+    splash: c.splash,
+    chain: c.chain ? Math.min(7, c.chain + Math.floor(lv/3)) : 0,
+    chainRange: c.chainRange
+  };
 }
-function setMsg(t,d){msg=t;msgT=d||0.9;}
-
-function startWave(){
-  wave++;active=true;
-  const n=3+Math.floor(wave*1.2);
-  const hb=20*Math.pow(1.16,wave-1);
-  const rb=6*Math.pow(1.18,wave-1);
-  const sp=30+Math.min(50,wave*0.5);
-  for(let i=0;i<n;i++)queue.push({d:i*0.8,hp:hb*(1+0.08*i),r:rb,s:sp});
+function upgradeCost(t) {
+  const c = TOWER_TYPES[t.type];
+  return Math.floor(c.costBase * Math.pow(c.costGrow, t.level - 1));
+}
+function sellValue(t) {
+  const c = TOWER_TYPES[t.type];
+  let total = c.cost;
+  for (let i = 1; i < t.level; i++) {
+    total += Math.floor(c.costBase * Math.pow(c.costGrow, i - 1));
+  }
+  return Math.floor(total * 0.7);
 }
 
-function update(dt){
-  if(over)return;
-  if(msgT>0){msgT-=dt;if(msgT<=0)msg='';}
+/* ============ 怪物配置 ============ */
+const ENEMY_TYPES = {
+  normal:      { hp:22,  speed:42, reward:8,  color:'#e74c3c', r:10, name:'小怪' },
+  fast:        { hp:16,  speed:78, reward:11, color:'#f39c12', r:9,  name:'疾兵' },
+  tank:        { hp:75,  speed:26, reward:17, color:'#8e44ad', r:14, name:'重甲' },
+  healer:      { hp:48,  speed:32, reward:20, color:'#1abc9c', r:11, name:'治疗' },
+  elite_fast:  { hp:150, speed:100,reward:70, color:'#ffd700', r:15, name:'精英·疾风' },
+  elite_tank:  { hp:420, speed:22, reward:110,color:'#ffd700', r:20, name:'精英·铁壁' },
+  elite_heal:  { hp:240, speed:34, reward:95, color:'#ffd700', r:17, name:'精英·圣愈' },
+  elite_split: { hp:220, speed:46, reward:85, color:'#ffd700', r:16, name:'精英·分裂' }
+};
 
-  if(!active){
-    wtimer-=dt;
-    if(wtimer<=0)startWave();
-  }else{
-    for(let i=queue.length-1;i>=0;i--){
-      queue[i].d-=dt;
-      if(queue[i].d<=0){
-        const q=queue[i];
-        enemies.push({pi:0,x:PATH[0].x,y:PATH[0].y,hp:q.hp,mhp:q.hp,s:q.s,r:q.r,rad:8});
-        queue.splice(i,1);
+function makeEnemy(type, wave) {
+  const c = ENEMY_TYPES[type] || ENEMY_TYPES.normal;
+  const hpScale = Math.pow(1.155, wave - 1);
+  const goldScale = Math.pow(1.115, wave - 1);
+  const speedScale = 1 + Math.min(0.55, wave * 0.014);
+  const isElite = type.indexOf('elite_') === 0;
+  return {
+    type, x:PATH[0].x, y:PATH[0].y, pi:0,
+    hp: c.hp * hpScale,
+    maxHp: c.hp * hpScale,
+    speed: c.speed * speedScale,
+    reward: c.reward * goldScale,
+    color: c.color,
+    r: c.r,
+    elite: isElite,
+    slowUntil: 0, slowFactor: 1,
+    healTimer: 1.5,
+    wobble: Math.random() * Math.PI * 2
+  };
+}
+
+/* ============ 全局状态 ============ */
+const state = {
+  gold: 200, hp: 20, maxHp: 20,
+  wave: 0, maxWave: 0,
+  waveActive: false, waveTimer: 2,
+  spawnQueue: [],
+  enemies: [], towers: [], bullets: [], effects: [],
+  gameOver: false, paused: false,
+  speed: 1,
+  selectedType: 'arrow',
+  panelTower: null,
+  toast: '', toastTime: 0,
+  camX: 0, camTargetX: 0,
+  buildFlash: null
+};
+
+/* ============ 存档 ============ */
+const SAVE_KEY = 'td_v2_save';
+function saveGame() {
+  if (state.gameOver) return;
+  try {
+    const data = {
+      gold: state.gold, hp: state.hp, maxHp: state.maxHp,
+      wave: state.wave, maxWave: state.maxWave,
+      towers: state.towers.map(t => ({ type:t.type, spotIdx:t.spotIdx, level:t.level })),
+      ts: Date.now()
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch(e) {}
+}
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d || !d.towers) return false;
+    state.gold = d.gold || 200;
+    state.hp = d.hp || 20;
+    state.maxHp = d.maxHp || 20;
+    state.wave = d.wave || 0;
+    state.maxWave = d.maxWave || 0;
+    state.towers = d.towers.map(t => {
+      const pos = SPOTS[t.spotIdx] || [100,100];
+      return { type:t.type, spotIdx:t.spotIdx, x:pos[0], y:pos[1],
+               level:t.level, cd:0, angle:0, recoil:0 };
+    });
+    return true;
+  } catch(e) { return false; }
+}
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch(e) {}
+}
+
+/* ============ 工具 ============ */
+function toast(text, time) {
+  state.toast = text;
+  state.toastTime = time || 1.2;
+}
+function addEffect(ef) { state.effects.push(ef); }
+
+/* ============ 波次系统 ============ */
+function startWave() {
+  state.wave++;
+  state.waveActive = true;
+  const w = state.wave;
+  const count = 4 + Math.floor(w * 0.7);
+  const interval = Math.max(0.32, 0.85 - w * 0.012);
+  const q = [];
+
+  for (let i = 0; i < count; i++) {
+    let type = 'normal';
+    if (w >= 3 && i % 5 === 2) type = 'fast';
+    if (w >= 5 && i % 7 === 4) type = 'tank';
+    if (w >= 8 && i % 11 === 6) type = 'healer';
+    q.push({ d: i * interval + 0.5, type });
+  }
+
+  if (w % 10 === 0) {
+    const elites = ['elite_fast','elite_tank','elite_heal','elite_split'];
+    const idx = Math.floor(w / 10 - 1) % 4;
+    q.push({ d: interval * 3, type: elites[idx] });
+    toast('⚠ 精英来袭：' + ENEMY_TYPES[elites[idx]].name, 2);
+  }
+
+  state.spawnQueue = q;
+}
+
+/* ============ 主更新 ============ */
+function update(dt) {
+  if (state.gameOver) return;
+
+  state.camX += (state.camTargetX - state.camX) * Math.min(1, dt * 14);
+  if (state.toastTime > 0) {
+    state.toastTime -= dt;
+    if (state.toastTime <= 0) state.toast = '';
+  }
+  if (state.buildFlash) {
+    state.buildFlash.life -= dt;
+    if (state.buildFlash.life <= 0) state.buildFlash = null;
+  }
+
+  if (!state.waveActive) {
+    state.waveTimer -= dt;
+    if (state.waveTimer <= 0) startWave();
+  } else {
+    for (let i = state.spawnQueue.length - 1; i >= 0; i--) {
+      const s = state.spawnQueue[i];
+      s.d -= dt;
+      if (s.d <= 0) {
+        state.enemies.push(makeEnemy(s.type, state.wave));
+        state.spawnQueue.splice(i, 1);
       }
     }
-    if(queue.length===0&&enemies.length===0){
-      active=false;wtimer=2.5;
-      const bonus=Math.floor(30*Math.pow(1.18,wave-1));
-      gold+=bonus;
-      setMsg('第'+wave+'波完成 +'+bonus,1.5);
+    if (state.spawnQueue.length === 0 && state.enemies.length === 0) {
+      state.waveActive = false;
+      state.waveTimer = 2.5;
+      const bonus = Math.floor(25 * Math.pow(1.14, state.wave - 1));
+      state.gold += bonus;
+      toast('第 ' + state.wave + ' 波完成 +' + bonus, 1.8);
+      if (state.wave > state.maxWave) state.maxWave = state.wave;
+      saveGame();
     }
   }
 
-  for(let i=enemies.length-1;i>=0;i--){
-    const e=enemies[i],t=PATH[e.pi+1];
-    if(!t){hp--;enemies.splice(i,1);if(hp<=0){hp=0;over=true;}continue;}
-    const dx=t.x-e.x,dy=t.y-e.y,d=Math.hypot(dx,dy);
-    if(d<=e.s*dt){e.x=t.x;e.y=t.y;e.pi++;}
-    else{e.x+=dx/d*e.s*dt;e.y+=dy/d*e.s*dt;}
-  }
+  updateEnemies(dt);
+  updateTowers(dt);
+  updateBullets(dt);
+  updateEffects(dt);
+}
 
-  for(const t of towers){
-    t.cd-=dt;
-    if(t.cd<=0){
-      let tg=null,mi=-1;
-      for(const e of enemies){
-        if(Math.hypot(e.x-t.x,e.y-t.y)<=t.range&&e.pi>mi){mi=e.pi;tg=e;}
+function updateEnemies(dt) {
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const e = state.enemies[i];
+    const target = PATH[e.pi + 1];
+    if (!target) {
+      state.hp -= e.elite ? 3 : 1;
+      addEffect({ type:'leak', x:e.x, y:e.y, life:0.5, maxLife:0.5 });
+      state.enemies.splice(i, 1);
+      if (state.hp <= 0) { state.hp = 0; state.gameOver = true; clearSave(); }
+      continue;
+    }
+    let speed = e.speed;
+    if (e.slowUntil > 0) { e.slowUntil -= dt; speed *= e.slowFactor; }
+    const dx = target.x - e.x, dy = target.y - e.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    if (dist <= speed * dt) { e.x = target.x; e.y = target.y; e.pi++; }
+    else { e.x += dx / dist * speed * dt; e.y += dy / dist * speed * dt; }
+    e.wobble += dt * 8;
+
+    if (e.type === 'healer' || e.type === 'elite_heal') {
+      e.healTimer -= dt;
+      if (e.healTimer <= 0) {
+        e.healTimer = 1.8;
+        let healed = false;
+        for (const o of state.enemies) {
+          if (o === e) continue;
+          if (Math.hypot(o.x-e.x, o.y-e.y) < 90) {
+            o.hp = Math.min(o.maxHp, o.hp + o.maxHp * 0.06);
+            healed = true;
+          }
+        }
+        if (healed) addEffect({ type:'healRing', x:e.x, y:e.y, life:0.6, maxLife:0.6 });
       }
-      if(tg){bullets.push({x:t.x,y:t.y,tg,dmg:t.dmg,s:220});t.cd=1/t.rate;}
-    }
-  }
-
-  for(let i=bullets.length-1;i>=0;i--){
-    const b=bullets[i];
-    if(enemies.indexOf(b.tg)<0){bullets.splice(i,1);continue;}
-    const dx=b.tg.x-b.x,dy=b.tg.y-b.y,d=Math.hypot(dx,dy);
-    if(d<=b.s*dt+5){
-      b.tg.hp-=b.dmg;
-      if(b.tg.hp<=0){gold+=b.tg.r;enemies.splice(enemies.indexOf(b.tg),1);}
-      bullets.splice(i,1);
-    }else{
-      b.x+=dx/d*b.s*dt;b.y+=dy/d*b.s*dt;
     }
   }
 }
 
-function draw(){
-  ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,W,H);
+function updateTowers(dt) {
+  for (const t of state.towers) {
+    const stats = towerStats(t);
+    t.cd -= dt;
+    if (t.recoil > 0) t.recoil = Math.max(0, t.recoil - dt * 8);
 
-  ctx.strokeStyle='#4a4a6a';ctx.lineWidth=30;
-  ctx.lineCap='round';ctx.lineJoin='round';
-  ctx.beginPath();ctx.moveTo(PATH[0].x,PATH[0].y);
-  for(let i=1;i<PATH.length;i++)ctx.lineTo(PATH[i].x,PATH[i].y);
+    let target = null, bestScore = -1e9;
+    for (const e of state.enemies) {
+      const d = Math.hypot(e.x - t.x, e.y - t.y);
+      if (d > stats.range) continue;
+      const score = e.pi * 10000 - d;
+      if (score > bestScore) { bestScore = score; target = e; }
+    }
+    t.hasTarget = !!target;
+
+    if (target) {
+      const desired = Math.atan2(target.y - t.y, target.x - t.x);
+      let diff = desired - t.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      t.angle += diff * Math.min(1, dt * 10);
+    }
+
+    if (t.cd <= 0 && target) {
+      t.cd = 1 / stats.rate;
+      fire(t, target, stats);
+    }
+  }
+}
+
+function fire(t, target, stats) {
+  if (t.type === 'arrow') {
+    state.bullets.push({
+      type:'arrow', x:t.x, y:t.y, target,
+      speed:460, damage:stats.damage, trail:[], angle:t.angle
+    });
+    t.recoil = 1;
+    if (t.level >= 10) {
+      for (const e of state.enemies) {
+        if (e === target) continue;
+        if (Math.hypot(e.x-t.x, e.y-t.y) < stats.range) {
+          state.bullets.push({
+            type:'arrow', x:t.x, y:t.y, target:e,
+            speed:460, damage:stats.damage*0.6, trail:[], angle:t.angle
+          });
+          break;
+        }
+      }
+    }
+  } else if (t.type === 'mortar') {
+    const dist = Math.hypot(target.x - t.x, target.y - t.y);
+    const dur = Math.max(0.25, dist / 280);
+    state.bullets.push({
+      type:'mortar', x:t.x, y:t.y,
+      startX:t.x, startY:t.y,
+      targetX:target.x, targetY:target.y,
+      t:0, duration:dur, damage:stats.damage, splash:stats.splash
+    });
+    t.recoil = 1.5;
+  } else if (t.type === 'tesla') {
+    const chain = [target];
+    let last = target;
+    for (let i = 1; i < stats.chain; i++) {
+      let best = null, bestD = Infinity;
+      for (const e of state.enemies) {
+        if (chain.indexOf(e) >= 0) continue;
+        const d = Math.hypot(e.x - last.x, e.y - last.y);
+        if (d < stats.chainRange && d < bestD) { bestD = d; best = e; }
+      }
+      if (!best) break;
+      chain.push(best);
+      last = best;
+    }
+    for (const e of chain) damageEnemy(e, stats.damage);
+    addEffect({
+      type:'lightning',
+      from:{x:t.x, y:t.y},
+      points: chain.map(e => ({x:e.x, y:e.y})),
+      life:0.22, maxLife:0.22
+    });
+    t.recoil = 1.2;
+  }
+}
+
+function damageEnemy(e, dmg) {
+  if (state.enemies.indexOf(e) < 0) return;
+  e.hp -= dmg;
+  addEffect({
+    type:'dmgText', x:e.x + (Math.random()-0.5)*12, y:e.y - 12,
+    text: Math.round(dmg), life:0.7, maxLife:0.7, vy:-40
+  });
+  if (e.hp <= 0) {
+    const idx = state.enemies.indexOf(e);
+    if (idx < 0) return;
+    state.enemies.splice(idx, 1);
+    state.gold += Math.round(e.reward);
+    addEffect({ type:'death', x:e.x, y:e.y, life:0.4, maxLife:0.4, color:e.color, r:e.r });
+    addEffect({ type:'goldText', x:e.x, y:e.y - 20, text:'+'+Math.round(e.reward),
+                life:0.9, maxLife:0.9, vy:-55 });
+    if (e.type === 'elite_split') {
+      for (let i = 0; i < 3; i++) {
+        const sub = makeEnemy('normal', state.wave);
+        sub.x = e.x + (Math.random()-0.5)*30;
+        sub.y = e.y + (Math.random()-0.5)*30;
+        sub.hp = sub.maxHp * 1.5;
+        sub.maxHp = sub.hp;
+        sub.pi = e.pi;
+        state.enemies.push(sub);
+      }
+    }
+  }
+}
+
+function updateBullets(dt) {
+  for (let i = state.bullets.length - 1; i >= 0; i--) {
+    const b = state.bullets[i];
+    if (b.type === 'arrow') {
+      if (state.enemies.indexOf(b.target) < 0) { state.bullets.splice(i,1); continue; }
+      const dx = b.target.x - b.x, dy = b.target.y - b.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d <= b.speed * dt + 6) {
+        damageEnemy(b.target, b.damage);
+        state.bullets.splice(i, 1);
+        continue;
+      }
+      b.trail.push({x:b.x, y:b.y});
+      if (b.trail.length > 7) b.trail.shift();
+      b.x += dx / d * b.speed * dt;
+      b.y += dy / d * b.speed * dt;
+      b.angle = Math.atan2(dy, dx);
+    } else if (b.type === 'mortar') {
+      b.t += dt;
+      const p = Math.min(1, b.t / b.duration);
+      const cx = b.startX + (b.targetX - b.startX) * p;
+      const cy = b.startY + (b.targetY - b.startY) * p;
+      const arc = Math.sin(p * Math.PI) * 70;
+      b.x = cx; b.y = cy - arc;
+      if (p >= 1) {
+        addEffect({ type:'explosion', x:b.targetX, y:b.targetY, r:b.splash,
+                    life:0.5, maxLife:0.5 });
+        const list = state.enemies.slice();
+        for (const e of list) {
+          if (Math.hypot(e.x - b.targetX, e.y - b.targetY) <= b.splash) {
+            damageEnemy(e, b.damage);
+          }
+        }
+        state.bullets.splice(i, 1);
+      }
+    }
+  }
+}
+
+function updateEffects(dt) {
+  for (let i = state.effects.length - 1; i >= 0; i--) {
+    const ef = state.effects[i];
+    ef.life -= dt;
+    if (ef.vy) ef.y += ef.vy * dt;
+    if (ef.life <= 0) state.effects.splice(i, 1);
+  }
+}
+
+/* ============ 渲染 ============ */
+function render(now) {
+  const ps = canvas.height / LH;
+  ctx.setTransform(ps, 0, 0, ps, 0, 0);
+  ctx.fillStyle = '#0b0f1a';
+  ctx.fillRect(0, 0, LW, LH);
+
+  const maxCam = Math.max(0, MAP_W - LW);
+  if (state.camX > maxCam) state.camX = maxCam;
+  if (state.camX < 0) state.camX = 0;
+
+  ctx.save();
+  ctx.translate(-state.camX, 0);
+  drawWorld(now);
+  ctx.restore();
+
+  drawUI(now);
+}
+
+function drawWorld(now) {
+  const g = ctx.createLinearGradient(0, 0, 0, MAP_H);
+  g.addColorStop(0, '#131a2e');
+  g.addColorStop(1, '#0e1424');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, MAP_W, MAP_H);
+
+  ctx.strokeStyle = 'rgba(80,120,200,0.05)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < MAP_W; x += 50) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, MAP_H); ctx.stroke();
+  }
+  for (let y = 0; y < MAP_H; y += 50) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(MAP_W, y); ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#222d47'; ctx.lineWidth = 46;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) ctx.lineTo(PATH[i].x, PATH[i].y);
   ctx.stroke();
 
-  ctx.fillStyle='#ff6b6b';ctx.beginPath();ctx.arc(180,600,16,0,7);ctx.fill();
-  ctx.fillStyle='#2ecc71';ctx.beginPath();ctx.arc(180,584,8,0,7);ctx.fill();
+  ctx.strokeStyle = '#36456b'; ctx.lineWidth = 38;
+  ctx.beginPath(); ctx.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) ctx.lineTo(PATH[i].x, PATH[i].y);
+  ctx.stroke();
 
-  for(const s of SPOTS){
-    const has=towers.some(t=>t.x===s[0]&&t.y===s[1]);
-    ctx.fillStyle=has?'#2ecc71':'#555';
-    ctx.beginPath();ctx.arc(s[0],s[1],15,0,7);ctx.fill();
+  const off = (now * 0.05) % 30;
+  ctx.strokeStyle = 'rgba(120,170,255,0.18)'; ctx.lineWidth = 3;
+  ctx.setLineDash([14, 16]); ctx.lineDashOffset = -off;
+  ctx.beginPath(); ctx.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) ctx.lineTo(PATH[i].x, PATH[i].y);
+  ctx.stroke(); ctx.setLineDash([]);
+
+  ctx.fillStyle = 'rgba(231,76,60,0.35)';
+  ctx.beginPath(); ctx.arc(PATH[0].x + 30, PATH[0].y, 22, 0, 7); ctx.fill();
+
+  drawCarrot(PATH[PATH.length-1].x, PATH[PATH.length-1].y, now);
+
+  drawTree(100, 400, now, 0);
+  drawTree(300, 150, now, 1);
+  drawTree(530, 100, now, 2);
+  drawTree(770, 480, now, 3);
+  drawTree(1050, 100, now, 4);
+  drawTree(1250, 550, now, 5);
+  drawTree(560, 400, now, 6);
+
+  for (let i = 0; i < SPOTS.length; i++) {
+    const sx = SPOTS[i][0], sy = SPOTS[i][1];
+    const occupied = state.towers.some(t => t.spotIdx === i);
+    if (occupied) continue;
+    const pulse = 1 + Math.sin(now * 0.003 + i * 1.3) * 0.08;
+    ctx.fillStyle = 'rgba(80,110,170,0.28)';
+    ctx.beginPath(); ctx.arc(sx, sy, 15 * pulse, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,170,240,0.55)'; ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(150,190,255,0.7)';
+    ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('+', sx, sy + 1);
   }
 
-  for(const t of towers){
-    ctx.strokeStyle='rgba(52,152,219,0.18)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.arc(t.x,t.y,t.range,0,7);ctx.stroke();
-    ctx.fillStyle='#3498db';ctx.beginPath();ctx.arc(t.x,t.y,12,0,7);ctx.fill();
-    ctx.fillStyle='#fff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';
-    ctx.fillText(t.lv,t.x,t.y+3.5);
+  for (const t of state.towers) drawTower(t, now);
+  for (const b of state.bullets) drawBullet(b);
+  for (const e of state.enemies) drawEnemy(e, now);
+  for (const ef of state.effects) drawEffect(ef);
+}
+
+function drawTree(x, y, now, seed) {
+  const sway = Math.sin(now * 0.0012 + seed) * 2;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(0, 14, 14, 4, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#2c2416';
+  ctx.fillRect(-3, 0, 6, 14);
+  ctx.fillStyle = '#1e5f3f';
+  ctx.beginPath(); ctx.arc(sway, -6, 14, 0, 7); ctx.fill();
+  ctx.fillStyle = '#2b8a5a';
+  ctx.beginPath(); ctx.arc(sway - 3, -9, 10, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function drawCarrot(x, y, now) {
+  const bob = Math.sin(now * 0.002) * 2;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(0, 16, 16, 5, 0, 0, 7); ctx.fill();
+
+  const g = ctx.createLinearGradient(0, -14, 0, 18);
+  g.addColorStop(0, '#ff9a56');
+  g.addColorStop(1, '#e67e22');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, 18);
+  ctx.quadraticCurveTo(-16, 0, -11, -14);
+  ctx.quadraticCurveTo(0, -19, 11, -14);
+  ctx.quadraticCurveTo(16, 0, 0, 18);
+  ctx.fill();
+
+  ctx.fillStyle = '#27ae60';
+  for (let i = -1; i <= 1; i++) {
+    ctx.save(); ctx.rotate(i * 0.4);
+    ctx.beginPath(); ctx.ellipse(0, -23, 4, 10, 0, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(-4, -2, 2, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(4, -2, 2, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 3, 4, 0.25, Math.PI - 0.25); ctx.stroke();
+  ctx.restore();
+}
+
+function drawTower(t, now) {
+  const stats = towerStats(t);
+  const c = TOWER_TYPES[t.type];
+
+  ctx.strokeStyle = 'rgba(120,170,255,0.13)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(t.x, t.y, stats.range, 0, 7); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath(); ctx.ellipse(t.x, t.y + 12, 16, 5, 0, 0, 7); ctx.fill();
+
+  const recoil = t.recoil || 0;
+  const pulse = 1 + Math.sin(now * 0.004) * 0.04;
+
+  if (t.type === 'arrow') {
+    ctx.fillStyle = '#1a2238';
+    ctx.beginPath(); ctx.arc(t.x, t.y, 15, 0, 7); ctx.fill();
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(t.x, t.y, 12 * pulse, 0, 7); ctx.fill();
+    ctx.fillStyle = c.accent;
+    ctx.beginPath(); ctx.arc(t.x, t.y, 8, 0, 7); ctx.fill();
+
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.angle);
+    const rec = -recoil * 2;
+    ctx.fillStyle = '#ecf0f1';
+    ctx.fillRect(-2 + rec, -3, 16, 6);
+    ctx.strokeStyle = '#85c1e9'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(12 + rec, -8);
+    ctx.quadraticCurveTo(18 + rec, 0, 12 + rec, 8); ctx.stroke();
+    ctx.fillStyle = '#f39c12';
+    ctx.beginPath(); ctx.arc(16 + rec, 0, 2.5, 0, 7); ctx.fill();
+    ctx.restore();
+  } else if (t.type === 'mortar') {
+    ctx.fillStyle = '#1a2238';
+    ctx.beginPath(); ctx.arc(t.x, t.y, 16, 0, 7); ctx.fill();
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(t.x, t.y, 13 * pulse, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1e5631';
+    ctx.beginPath(); ctx.arc(t.x, t.y, 9, 0, 7); ctx.fill();
+
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.angle);
+    const rec = -recoil * 4;
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(-3 + rec, -5, 18, 10);
+    ctx.fillStyle = '#34495e';
+    ctx.fillRect(11 + rec, -6, 5, 12);
+    ctx.fillStyle = c.accent;
+    ctx.beginPath(); ctx.arc(11 + rec, 0, 3, 0, 7); ctx.fill();
+    ctx.restore();
+  } else if (t.type === 'tesla') {
+    ctx.fillStyle = '#1a2238';
+    ctx.beginPath(); ctx.arc(t.x, t.y, 16, 0, 7); ctx.fill();
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(t.x, t.y, 13 * pulse, 0, 7); ctx.fill();
+
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(now * 0.004);
+    ctx.strokeStyle = c.accent; ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, i * 2.09, i * 2.09 + 1.4);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    const hov = Math.sin(now * 0.006) * 2;
+    const glow = ctx.createRadialGradient(t.x, t.y + hov, 0, t.x, t.y + hov, 12);
+    glow.addColorStop(0, 'rgba(240,200,255,0.95)');
+    glow.addColorStop(0.5, 'rgba(180,120,230,0.7)');
+    glow.addColorStop(1, 'rgba(150,80,210,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(t.x, t.y + hov, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = '#f5e6ff';
+    ctx.beginPath(); ctx.arc(t.x, t.y + hov, 5, 0, 7); ctx.fill();
   }
 
-  for(const e of enemies){
-    ctx.fillStyle='#e74c3c';
-    ctx.beginPath();ctx.arc(e.x,e.y,e.rad,0,7);ctx.fill();
-    ctx.fillStyle='#000';ctx.fillRect(e.x-10,e.y-16,20,4);
-    ctx.fillStyle='#0f0';ctx.fillRect(e.x-10,e.y-16,20*Math.max(0,e.hp/e.mhp),4);
-  }
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.beginPath(); ctx.arc(t.x, t.y + 14, 8, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(t.level, t.x, t.y + 14.5);
 
-  for(const b of bullets){
-    ctx.fillStyle='#f1c40f';
-    ctx.beginPath();ctx.arc(b.x,b.y,3,0,7);ctx.fill();
-  }
-
-  ctx.fillStyle='#fff';ctx.font='bold 15px sans-serif';ctx.textAlign='left';
-  ctx.fillText('金币 '+Math.floor(gold),12,24);
-  ctx.fillText('波次 '+wave,12,46);
-  ctx.fillText('萝卜 '+hp,12,68);
-
-  if(msg){
-    ctx.fillStyle='#f1c40f';ctx.font='bold 14px sans-serif';ctx.textAlign='center';
-    ctx.fillText(msg,180,100);
-  }
-
-  if(over){
-    ctx.fillStyle='rgba(0,0,0,0.75)';ctx.fillRect(0,0,W,H);
-    ctx.fillStyle='#fff';ctx.textAlign='center';
-    ctx.font='bold 30px sans-serif';ctx.fillText('游戏结束',180,280);
-    ctx.font='18px sans-serif';ctx.fillText('到达波次 '+wave,180,320);
-    ctx.fillStyle='#f1c40f';ctx.fillText('点击屏幕重新开始',180,365);
+  const cost = upgradeCost(t);
+  if (state.gold >= cost) {
+    const bounce = Math.abs(Math.sin(now * 0.006)) * 4;
+    const yy = t.y - 26 - bounce;
+    const gg = ctx.createRadialGradient(t.x, yy, 0, t.x, yy, 14);
+    gg.addColorStop(0, 'rgba(255,220,80,0.9)');
+    gg.addColorStop(1, 'rgba(255,200,40,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(t.x, yy, 14, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffd93b';
+    ctx.beginPath(); ctx.arc(t.x, yy, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3a2600';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('!', t.x, yy + 1);
   }
 }
 
-function loop(t){
-  if(!last)last=t;
-  let dt=(t-last)/1000;last=t;
-  if(dt>0.05)dt=0.05;
-  update(dt);draw();
+function drawEnemy(e, now) {
+  const wob = Math.sin(e.wobble) * 1.5;
+  const x = e.x + wob, y = e.y;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath(); ctx.ellipse(e.x, e.y + e.r + 2, e.r * 0.9, e.r * 0.3, 0, 0, 7); ctx.fill();
+
+  if (e.elite) {
+    const pulse = 1 + Math.sin(now * 0.01) * 0.15;
+    const gg = ctx.createRadialGradient(x, y, 0, x, y, e.r * 2 * pulse);
+    gg.addColorStop(0, 'rgba(255,215,0,0.5)');
+    gg.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(x, y, e.r * 2 * pulse, 0, 7); ctx.fill();
+  }
+
+  ctx.fillStyle = e.color;
+  ctx.beginPath(); ctx.arc(x, y, e.r, 0, 7); ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.arc(x - e.r * 0.25, y - e.r * 0.25, e.r * 0.5, 0, 7); ctx.fill();
+
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(x - 3, y - 2, 2, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 3, y - 2, 2, 0, 7); ctx.fill();
+
+  if (e.elite) {
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('★', x, y - e.r - 8);
+  }
+
+  const bw = e.r * 2 + 8, bh = 4;
+  const bx = x - bw / 2, by = y - e.r - 12;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(bx, by, bw, bh);
+  const pct = Math.max(0, e.hp / e.maxHp);
+  ctx.fillStyle = pct > 0.5 ? '#2ecc71' : pct > 0.25 ? '#f39c12' : '#e74c3c';
+  ctx.fillRect(bx, by, bw * pct, bh);
+}
+
+function drawBullet(b) {
+  if (b.type === 'arrow') {
+    for (let i = 0; i < b.trail.length; i++) {
+      const p = b.trail[i];
+      const a = (i / b.trail.length) * 0.5;
+      ctx.fillStyle = 'rgba(120,190,255,' + a + ')';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2 + i * 0.3, 0, 7); ctx.fill();
+    }
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.angle || 0);
+    ctx.fillStyle = '#ecf0f1';
+    ctx.beginPath();
+    ctx.moveTo(6, 0); ctx.lineTo(-4, -3); ctx.lineTo(-2, 0); ctx.lineTo(-4, 3);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  } else if (b.type === 'mortar') {
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    const p = Math.min(1, b.t / b.duration);
+    ctx.ellipse(b.targetX, b.targetY, b.splash * 0.5 * (1 - p * 0.3), b.splash * 0.18, 0, 0, 7);
+    ctx.fill();
+    ctx.fillStyle = '#3a3f4a';
+    ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, 7); ctx.fill();
+    ctx.fillStyle = '#5a6070';
+    ctx.beginPath(); ctx.arc(b.x - 1, b.y - 1, 3, 0, 7); ctx.fill();
+  }
+}
+
+function drawEffect(ef) {
+  const p = 1 - ef.life / ef.maxLife;
+  if (ef.type === 'dmgText') {
+    ctx.globalAlpha = 1 - p;
+    ctx.fillStyle = '#ffe36e';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 2.5;
+    ctx.strokeText(ef.text, ef.x, ef.y);
+    ctx.fillText(ef.text, ef.x, ef.y);
+    ctx.globalAlpha = 1;
+  } else if (ef.type === 'goldText') {
+    ctx.globalAlpha = 1 - p;
+    ctx.fillStyle = '#ffd93b';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 2.5;
+    ctx.strokeText(ef.text, ef.x, ef.y);
+    ctx.fillText(ef.text, ef.x, ef.y);
+    ctx.globalAlpha = 1;
+  } else if (ef.type === 'death') {
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = ef.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(ef.x, ef.y, ef.r + p * 20, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (ef.type === 'explosion') {
+    ctx.globalAlpha = 1 - p;
+    const rr = ef.r * (0.5 + p * 0.7);
+    const g = ctx.createRadialGradient(ef.x, ef.y, 0, ef.x, ef.y, rr);
+    g.addColorStop(0, 'rgba(255,220,120,0.9)');
+    g.addColorStop(0.6, 'rgba(255,120,40,0.6)');
+    g.addColorStop(1, 'rgba(255,60,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(ef.x, ef.y, rr, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  } else if (ef.type === 'lightning') {
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = '#e6d6ff';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#b47cff';
+    ctx.shadowBlur = 12;
+    const pts = [ef.from].concat(ef.points);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const seg = 6;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      for (let k = 1; k < seg; k++) {
+        const tt = k / seg;
+        const jx = (Math.random() - 0.5) * 12;
+        const jy = (Math.random() - 0.5) * 12;
+        ctx.lineTo(a.x + (b.x - a.x) * tt + jx, a.y + (b.y - a.y) * tt + jy);
+      }
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  } else if (ef.type === 'healRing') {
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = '#7bed9f';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(ef.x, ef.y, 20 + p * 70, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (ef.type === 'leak') {
+    ctx.globalAlpha = 1 - p;
+    ctx.fillStyle = '#ff3355';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('-1', ef.x, ef.y - p * 20);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ============ UI ============ */
+function getButtons() {
+  const btns = [];
+  const speeds = [1, 2, 4, 6, 8];
+  const sw = 34, gap = 4;
+  const totalW = speeds.length * sw + (speeds.length - 1) * gap;
+  const startX = LW - totalW - 8;
+  for (let i = 0; i < speeds.length; i++) {
+    btns.push({
+      id: 'speed_' + speeds[i], speed: speeds[i],
+      x: startX + i * (sw + gap), y: 6, w: sw, h: 30
+    });
+  }
+  btns.push({ id: 'pause', x: 8, y: 6, w: 64, h: 30 });
+
+  const bw = Math.min(108, (LW - 40) / 3 - 8);
+  const bh = 62;
+  const by = LH - bh - 10;
+  const totW = bw * 3 + 16;
+  const sx = (LW - totW) / 2;
+  const types = ['arrow', 'mortar', 'tesla'];
+  for (let i = 0; i < 3; i++) {
+    btns.push({
+      id: 'tower_' + types[i], type: types[i],
+      x: sx + i * (bw + 8), y: by, w: bw, h: bh
+    });
+  }
+  return btns;
+}
+
+function drawUI(now) {
+  ctx.fillStyle = 'rgba(10,16,30,0.85)';
+  ctx.fillRect(0, 0, LW, 44);
+  ctx.fillStyle = 'rgba(90,130,200,0.35)';
+  ctx.fillRect(0, 44, LW, 1);
+
+  ctx.fillStyle = '#ffd93b';
+  ctx.beginPath(); ctx.arc(18, 22, 7, 0, 7); ctx.fill();
+  ctx.fillStyle = '#8a6b00';
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('G', 18, 22.5);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(Math.floor(state.gold), 30, 23);
+
+  ctx.fillStyle = '#7fb8ff';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('W' + state.wave, 108, 23);
+
+  ctx.fillStyle = '#ff5a7a';
+  ctx.beginPath();
+  const hx = 158, hy = 22;
+  ctx.moveTo(hx, hy + 5);
+  ctx.bezierCurveTo(hx - 8, hy - 3, hx - 4, hy - 8, hx, hy - 3);
+  ctx.bezierCurveTo(hx + 4, hy - 8, hx + 8, hy - 3, hx, hy + 5);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText(state.hp, hx + 12, 23);
+
+  ctx.fillStyle = 'rgba(200,220,255,0.5)';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('最高 W' + state.maxWave, LW - 8, 23);
+  ctx.textAlign = 'left';
+
+  const btns = getButtons();
+  const pauseBtn = btns.find(b => b.id === 'pause');
+  ctx.fillStyle = state.paused ? 'rgba(255,180,60,0.9)' : 'rgba(60,90,150,0.7)';
+  roundRect(pauseBtn.x, pauseBtn.y, pauseBtn.w, pauseBtn.h, 6); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(state.paused ? '继续' : '暂停', pauseBtn.x + pauseBtn.w/2, pauseBtn.y + pauseBtn.h/2 + 1);
+
+  for (const b of btns) {
+    if (b.id.indexOf('speed_') !== 0) continue;
+    const active = state.speed === b.speed;
+    ctx.fillStyle = active ? 'rgba(255,180,60,0.9)' : 'rgba(40,60,100,0.75)';
+    roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill();
+    ctx.fillStyle = active ? '#2a1a00' : '#c8d8f0';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(b.speed + 'x', b.x + b.w/2, b.y + b.h/2 + 1);
+  }
+
+  if (state.toast) {
+    ctx.globalAlpha = Math.min(1, state.toastTime * 2);
+    ctx.fillStyle = 'rgba(20,30,50,0.92)';
+    const tw = Math.max(160, state.toast.length * 14);
+    roundRect(LW/2 - tw/2, 56, tw, 30, 8); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,200,80,0.6)'; ctx.lineWidth = 1.5;
+    roundRect(LW/2 - tw/2, 56, tw, 30, 8); ctx.stroke();
+    ctx.fillStyle = '#ffd93b';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(state.toast, LW/2, 71);
+    ctx.globalAlpha = 1;
+  }
+
+  for (const b of btns) {
+    if (b.id.indexOf('tower_') !== 0) continue;
+    const c = TOWER_TYPES[b.type];
+    const selected = state.selectedType === b.type;
+    const canAfford = state.gold >= c.cost;
+
+    ctx.fillStyle = selected ? 'rgba(40,80,140,0.95)' : 'rgba(20,30,50,0.9)';
+    roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill();
+    ctx.strokeStyle = selected ? c.accent : 'rgba(90,120,180,0.5)';
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    roundRect(b.x, b.y, b.w, b.h, 10); ctx.stroke();
+
+    const ix = b.x + 26, iy = b.y + b.h / 2;
+    drawTowerIcon(b.type, ix, iy, now);
+
+    ctx.fillStyle = canAfford ? '#fff' : '#ff7676';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(c.name, b.x + 48, b.y + 22);
+
+    ctx.fillStyle = '#ffd93b';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('💰 ' + c.cost, b.x + 48, b.y + 42);
+
+    if (selected) {
+      ctx.fillStyle = c.accent;
+      ctx.beginPath();
+      ctx.moveTo(b.x + b.w/2, b.y - 6);
+      ctx.lineTo(b.x + b.w/2 - 5, b.y - 12);
+      ctx.lineTo(b.x + b.w/2 + 5, b.y - 12);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  if (state.panelTower) drawTowerPanel(now);
+  if (state.paused && !state.gameOver) drawPausePanel();
+  if (state.gameOver) drawGameOver();
+}
+
+function drawTowerIcon(type, x, y, now) {
+  const c = TOWER_TYPES[type];
+  if (type === 'arrow') {
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = c.accent;
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ecf0f1';
+    ctx.fillRect(x - 2, y - 10, 4, 20);
+    ctx.fillStyle = '#f39c12';
+    ctx.beginPath(); ctx.arc(x, y - 10, 3, 0, 7); ctx.fill();
+  } else if (type === 'mortar') {
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1e5631';
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(x - 3, y - 12, 6, 16);
+    ctx.fillStyle = c.accent;
+    ctx.beginPath(); ctx.arc(x, y - 12, 3, 0, 7); ctx.fill();
+  } else if (type === 'tesla') {
+    ctx.fillStyle = c.color;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+    ctx.strokeStyle = c.accent; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 8, now * 0.005, now * 0.005 + 4); ctx.stroke();
+    ctx.fillStyle = '#f5e6ff';
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill();
+  }
+}
+
+function drawTowerPanel(now) {
+  const t = state.panelTower;
+  if (!t) return;
+  if (state.towers.indexOf(t) < 0) { state.panelTower = null; return; }
+
+  const cost = upgradeCost(t);
+  const sell = sellValue(t);
+  const canUp = state.gold >= cost;
+
+  const pw = 180, ph = 88;
+  let px = t.x - pw / 2;
+  let py = t.y - ph - 30;
+  if (px < state.camX + 8) px = state.camX + 8;
+  if (px + pw > state.camX + LW - 8) px = state.camX + LW - pw - 8;
+  if (py < 50) py = t.y + 32;
+
+  ctx.fillStyle = 'rgba(12,20,38,0.96)';
+  roundRect(px, py, pw, ph, 10); ctx.fill();
+  ctx.strokeStyle = TOWER_TYPES[t.type].accent; ctx.lineWidth = 2;
+  roundRect(px, py, pw, ph, 10); ctx.stroke();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(TOWER_TYPES[t.type].name + ' Lv.' + t.level, px + 12, py + 16);
+
+  const bw = pw - 24, bh = 26;
+  const upX = px + 12, upY = py + 32;
+  ctx.fillStyle = canUp ? 'rgba(80,180,90,0.95)' : 'rgba(70,70,70,0.85)';
+  roundRect(upX, upY, bw, bh, 6); ctx.fill();
+  ctx.fillStyle = canUp ? '#fff' : '#999';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('升级  💰' + cost, upX + bw / 2, upY + bh / 2 + 1);
+
+  const slX = px + 12, slY = py + 60;
+  ctx.fillStyle = 'rgba(200,70,70,0.9)';
+  roundRect(slX, slY, bw, bh, 6); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('出售  💰+' + sell, slX + bw / 2, slY + bh / 2 + 1);
+
+  state.panelTower._uiRects = {
+    up: { x: upX, y: upY, w: bw, h: bh, cost },
+    sell: { x: slX, y: slY, w: bw, h: bh, value: sell }
+  };
+}
+
+function drawPausePanel() {
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0, 0, LW, LH);
+
+  const pw = 260, ph = 240;
+  const px = (LW - pw) / 2, py = (LH - ph) / 2;
+  ctx.fillStyle = 'rgba(18,26,46,0.98)';
+  roundRect(px, py, pw, ph, 14); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,170,255,0.5)'; ctx.lineWidth = 2;
+  roundRect(px, py, pw, ph, 14); ctx.stroke();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('已暂停', LW / 2, py + 32);
+
+  ctx.fillStyle = '#9fb8df';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('进度已自动保存', LW / 2, py + 58);
+
+  const btnW = pw - 40, btnH = 40;
+  const bx = px + 20;
+  let by = py + 82;
+
+  ctx.fillStyle = 'rgba(80,170,90,0.95)';
+  roundRect(bx, by, btnW, btnH, 8); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('继续游戏', LW / 2, by + btnH / 2 + 1);
+  state._pauseUI = { cont:{x:bx,y:by,w:btnW,h:btnH} };
+
+  by += btnH + 12;
+  ctx.fillStyle = 'rgba(200,140,40,0.95)';
+  roundRect(bx, by, btnW, btnH, 8); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('重新开始', LW / 2, by + btnH / 2 + 1);
+  state._pauseUI.restart = {x:bx,y:by,w:btnW,h:btnH};
+
+  by += btnH + 12;
+  ctx.fillStyle = 'rgba(60,80,120,0.9)';
+  roundRect(bx, by, btnW, btnH, 8); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('返回游戏（取消）', LW / 2, by + btnH / 2 + 1);
+  state._pauseUI.cancel = {x:bx,y:by,w:btnW,h:btnH};
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  ctx.fillRect(0, 0, LW, LH);
+
+  const pw = 280, ph = 260;
+  const px = (LW - pw) / 2, py = (LH - ph) / 2;
+  ctx.fillStyle = 'rgba(24,16,30,0.98)';
+  roundRect(px, py, pw, ph, 14); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,90,120,0.6)'; ctx.lineWidth = 2;
+  roundRect(px, py, pw, ph, 14); ctx.stroke();
+
+  ctx.fillStyle = '#ff5a7a';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('萝卜被吃掉了', LW / 2, py + 42);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('到达波次：' + state.wave, LW / 2, py + 88);
+
+  ctx.fillStyle = '#9fb8df';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('历史最高：' + state.maxWave, LW / 2, py + 115);
+
+  const btnW = pw - 40, btnH = 46;
+  const bx = px + 20;
+  let by = py + 148;
+
+  ctx.fillStyle = 'rgba(80,170,90,0.95)';
+  roundRect(bx, by, btnW, btnH, 8); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText('重新开始', LW / 2, by + btnH / 2 + 1);
+  state._overUI = { restart:{x:bx,y:by,w:btnW,h:btnH} };
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* ============ 输入处理 ============ */
+let pointer = {
+  down: false, moved: false,
+  startX: 0, startY: 0,
+  lastX: 0, lastY: 0,
+  camStart: 0,
+  time: 0
+};
+
+function toLogical(cx, cy) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (cx - rect.left) * (LW / rect.width);
+  const y = (cy - rect.top) * (LH / rect.height);
+  return { x, y };
+}
+
+function hitRect(p, r) {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const p = toLogical(e.clientX, e.clientY);
+  pointer.down = true;
+  pointer.moved = false;
+  pointer.startX = p.x;
+  pointer.startY = p.y;
+  pointer.lastX = p.x;
+  pointer.lastY = p.y;
+  pointer.camStart = state.camTargetX;
+  pointer.time = performance.now();
+}, { passive: false });
+
+canvas.addEventListener('pointermove', e => {
+  if (!pointer.down) return;
+  const p = toLogical(e.clientX, e.clientY);
+  const dx = p.x - pointer.startX;
+  const dy = p.y - pointer.startY;
+  if (Math.hypot(dx, dy) > 10) pointer.moved = true;
+
+  if (pointer.moved) {
+    const newCam = pointer.camStart - dx;
+    const maxCam = Math.max(0, MAP_W - LW);
+    state.camTargetX = Math.max(0, Math.min(maxCam, newCam));
+    state.camX = state.camTargetX;
+  }
+}, { passive: false });
+
+canvas.addEventListener('pointerup', e => {
+  e.preventDefault();
+  if (!pointer.down) return;
+  pointer.down = false;
+  if (pointer.moved) return;
+  const p = toLogical(e.clientX, e.clientY);
+  handleTap(p.x, p.y);
+}, { passive: false });
+
+canvas.addEventListener('pointercancel', () => { pointer.down = false; });
+
+/* ============ 点击处理 ============ */
+function handleTap(x, y) {
+  if (state.gameOver) {
+    if (state._overUI && hitRect({x,y}, state._overUI.restart)) {
+      restartGame();
+    }
+    return;
+  }
+
+  if (state.paused) {
+    const ui = state._pauseUI;
+    if (!ui) return;
+    if (hitRect({x,y}, ui.cont)) { state.paused = false; return; }
+    if (hitRect({x,y}, ui.cancel)) { state.paused = false; return; }
+    if (hitRect({x,y}, ui.restart)) { restartGame(); return; }
+    return;
+  }
+
+  if (state.panelTower && state.panelTower._uiRects) {
+    const r = state.panelTower._uiRects;
+    if (hitRect({x,y}, r.up)) {
+      doUpgrade(state.panelTower);
+      return;
+    }
+    if (hitRect({x,y}, r.sell)) {
+      doSell(state.panelTower);
+      return;
+    }
+  }
+
+  const btns = getButtons();
+  for (const b of btns) {
+    let hit = false;
+    if (b.id === 'pause') hit = hitRect({x,y}, b);
+    else if (b.id.indexOf('speed_') === 0) hit = hitRect({x,y}, b);
+    else if (b.id.indexOf('tower_') === 0) hit = hitRect({x,y}, b);
+    if (hit) {
+      if (b.id === 'pause') { state.paused = !state.paused; return; }
+      if (b.id.indexOf('speed_') === 0) {
+        state.speed = (state.speed === b.speed) ? 1 : b.speed;
+        toast('速度 ' + state.speed + 'x', 0.9);
+        return;
+      }
+      if (b.id.indexOf('tower_') === 0) {
+        state.selectedType = b.type;
+        state.panelTower = null;
+        return;
+      }
+    }
+  }
+
+  const wx = x + state.camX;
+  const wy = y;
+
+  let spotIdx = -1;
+  for (let i = 0; i < SPOTS.length; i++) {
+    const [sx, sy] = SPOTS[i];
+    if (Math.hypot(sx - wx, sy - wy) < 26) { spotIdx = i; break; }
+  }
+
+  if (spotIdx < 0) {
+    state.panelTower = null;
+    return;
+  }
+
+  const existing = state.towers.find(t => t.spotIdx === spotIdx);
+  if (existing) {
+    state.panelTower = existing;
+    return;
+  }
+
+  const type = state.selectedType;
+  const cost = TOWER_TYPES[type].cost;
+  if (state.gold < cost) {
+    toast('金币不足（需要 ' + cost + '）', 1.2);
+    return;
+  }
+  state.gold -= cost;
+  const pos = SPOTS[spotIdx];
+  const t = {
+    type, spotIdx, x: pos[0], y: pos[1],
+    level: 1, cd: 0, angle: -Math.PI / 2, recoil: 0
+  };
+  state.towers.push(t);
+  state.panelTower = t;
+  state.buildFlash = { x: pos[0], y: pos[1], life: 0.4 };
+  toast('建造 ' + TOWER_TYPES[type].name, 0.9);
+  saveGame();
+}
+
+function doUpgrade(t) {
+  const cost = upgradeCost(t);
+  if (state.gold < cost) { toast('金币不足', 1); return; }
+  state.gold -= cost;
+  t.level++;
+  toast('升到 Lv.' + t.level, 1);
+  saveGame();
+}
+
+function doSell(t) {
+  const v = sellValue(t);
+  state.gold += v;
+  const idx = state.towers.indexOf(t);
+  if (idx >= 0) state.towers.splice(idx, 1);
+  state.panelTower = null;
+  toast('出售 +' + v, 1);
+  saveGame();
+}
+
+/* ============ 游戏控制 ============ */
+function restartGame() {
+  clearSave();
+  state.gold = 200;
+  state.hp = 20;
+  state.maxHp = 20;
+  state.wave = 0;
+  state.waveActive = false;
+  state.waveTimer = 2;
+  state.spawnQueue = [];
+  state.enemies = [];
+  state.towers = [];
+  state.bullets = [];
+  state.effects = [];
+  state.gameOver = false;
+  state.paused = false;
+  state.speed = 1;
+  state.panelTower = null;
+  state.toast = '';
+  state.toastTime = 0;
+  state.camX = 0;
+  state.camTargetX = 0;
+}
+
+/* ============ 主循环 ============ */
+let lastTime = 0;
+function loop(now) {
+  if (!lastTime) lastTime = now;
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  if (dt > 0.1) dt = 0.1;
+
+  if (!state.paused && !state.gameOver) {
+    const scaled = dt * state.speed;
+    const steps = Math.max(1, Math.ceil(scaled / 0.02));
+    const stepDt = scaled / steps;
+    for (let i = 0; i < steps; i++) update(stepDt);
+  }
+
+  render(now);
   requestAnimationFrame(loop);
 }
 
-function handleTap(x,y){
-  if(over){reset();return;}
-  let spot=null;
-  for(const s of SPOTS){
-    if(Math.hypot(s[0]-x,s[1]-y)<26){spot=s;break;}
-  }
-  if(!spot)return;
-  const tw=towers.find(t=>t.x===spot[0]&&t.y===spot[1]);
-  if(!tw){
-    if(gold>=30){
-      gold-=30;
-      towers.push({x:spot[0],y:spot[1],lv:1,cd:0,dmg:10,range:70,rate:1});
-      setMsg('建造炮塔');
-    }else setMsg('金币不足');
-  }else{
-    const cost=Math.floor(30*Math.pow(1.18,tw.lv-1));
-    if(gold>=cost){
-      gold-=cost;tw.lv++;
-      tw.dmg=10*Math.pow(1.15,tw.lv-1);
-      tw.range=70+tw.lv*2;
-      tw.rate=1+tw.lv*0.02;
-      setMsg('升到 '+tw.lv+' 级');
-    }else setMsg('需要 '+cost+' 金币');
-  }
+/* ============ 启动 ============ */
+if (!loadGame()) {
+  state.gold = 200;
+  state.hp = 20;
+  state.maxHp = 20;
 }
-
-cv.addEventListener('pointerdown',e=>{
-  e.preventDefault();
-  const r=cv.getBoundingClientRect();
-  const x=(e.clientX-r.left)*(W/r.width);
-  const y=(e.clientY-r.top)*(H/r.height);
-  handleTap(x,y);
-},{passive:false});
-
-reset();
 requestAnimationFrame(loop);
 
-if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('sw.js').catch(()=>{});
+/* ============ Service Worker ============ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }
 </script>
