@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="110" fill="#1a1a2e"/>
+  <path d="M90 400 Q180 180 256 400 Q332 180 422 400" fill="none" stroke="#4a4a6a" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="230" r="78" fill="#3498db"/>
+  <circle cx="256" cy="230" r="78" fill="none" stroke="#5dade2" stroke-width="8"/>
+  <text x="256" y="262" font-size="86" text-anchor="middle" fill="#fff" font-family="sans-serif" font-weight="bold">塔</text>
+</svg>
